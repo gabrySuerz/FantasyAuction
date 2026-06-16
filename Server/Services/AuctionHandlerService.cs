@@ -11,7 +11,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
-using System.Threading;
 using System.Threading.Tasks;
 
 namespace FantasyAuction.Server.Services
@@ -47,28 +46,40 @@ namespace FantasyAuction.Server.Services
             _biddingTime = 20;
         }
 
-        public async void RefreshPlayersData()
+        public void RefreshPlayersData()
         {
-            var client = new HttpClient()
-            {
-                BaseAddress = new Uri(_dataApi.Endpoint)
-            };
+            _ = RefreshPlayersDataAsync();
+        }
 
-            using var response = await client.GetAsync("");
-            if (response.IsSuccessStatusCode)
+        private async Task RefreshPlayersDataAsync()
+        {
+            try
             {
-                var endpointResponse = JsonConvert.DeserializeObject<EndpointResponse>(response.Content.ReadAsStringAsync().Result);
-                _players = _mapper.Map<IEnumerable<Player>>(endpointResponse.Data);
-                _players.ToList().ForEach(p =>
+                var client = new HttpClient()
                 {
-                    if (!string.IsNullOrWhiteSpace(p.Img)
-                        && !p.Img.ToLower().StartsWith("http://")
-                        && !p.Img.ToLower().StartsWith("https://")
-                    )
+                    BaseAddress = new Uri(_dataApi.Endpoint)
+                };
+
+                using var response = await client.GetAsync("");
+                if (response.IsSuccessStatusCode)
+                {
+                    var endpointResponse = JsonConvert.DeserializeObject<EndpointResponse>(await response.Content.ReadAsStringAsync());
+                    _players = _mapper.Map<IEnumerable<Player>>(endpointResponse.Data);
+                    _players.ToList().ForEach(p =>
                     {
-                        p.Img = $"https://www.fantaformazione.com/{p.Img}";
-                    }
-                });
+                        if (!string.IsNullOrWhiteSpace(p.Img)
+                            && !p.Img.ToLower().StartsWith("http://")
+                            && !p.Img.ToLower().StartsWith("https://")
+                        )
+                        {
+                            p.Img = $"https://www.fantaformazione.com/{p.Img}";
+                        }
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "An error occurred while refreshing player data");
             }
         }
 
@@ -81,11 +92,19 @@ namespace FantasyAuction.Server.Services
         {
             if (!_isAuctionInProgress)
             {
-                _ = new Task(() =>
+                _ = Task.Run(async () =>
                 {
-                    ClearAndStart();
-                    ExecuteAuction();
-                    EndAuction();
+                    try
+                    {
+                        await ClearAndStart();
+                        await ExecuteAuction();
+                        await EndAuctionAsync();
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "An error occurred during the auction");
+                        _isAuctionInProgress = false;
+                    }
                 });
             }
             else
@@ -95,32 +114,44 @@ namespace FantasyAuction.Server.Services
             }
         }
 
-        private async void ClearAndStart()
+        private async Task ClearAndStart()
         {
             _isAuctionInProgress = true;
             _soldPlayers = new List<SoldPlayer>();
             await _auctionAuction.Clients.All.SendAsync("AuctionStarted", _waitingTime);
-            Thread.Sleep(_waitingTime * 1000);
+            await Task.Delay(_waitingTime * 1000);
         }
 
-        private async void ExecuteAuction()
+        private async Task ExecuteAuction()
         {
             var playersToPick = _players.ToList();
             while (playersToPick.Any())
             {
                 var player = playersToPick.First();
                 await _auctionAuction.Clients.All.SendAsync("ReceivePlayer", player, _biddingTime);
-                Thread.Sleep(_biddingTime * 1000);
+                await Task.Delay(_biddingTime * 1000);
                 playersToPick = playersToPick.Where(g => g.Id != player.Id).ToList();
                 await _auctionAuction.Clients.All.SendAsync("WaitNextPlayer", _waitingTime);
-                Thread.Sleep(_waitingTime * 1000);
+                await Task.Delay(_waitingTime * 1000);
             }
         }
 
-        public async void EndAuction()
+        public void EndAuction()
         {
-            _isAuctionInProgress = false;
-            await _auctionAuction.Clients.All.SendAsync("AuctionEnded");
+            _ = EndAuctionAsync();
+        }
+
+        private async Task EndAuctionAsync()
+        {
+            try
+            {
+                _isAuctionInProgress = false;
+                await _auctionAuction.Clients.All.SendAsync("AuctionEnded");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "An error occurred while ending the auction");
+            }
         }
 
         public void InsertAndCompareBid(Bid bid)
