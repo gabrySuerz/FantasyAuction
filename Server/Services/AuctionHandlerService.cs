@@ -143,8 +143,15 @@ namespace FantasyAuction.Server.Services
 
         private async Task EndAuctionAsync()
         {
-            _isAuctionInProgress = false;
-            await _auctionAuction.Clients.All.SendAsync("AuctionEnded");
+            try
+            {
+                _isAuctionInProgress = false;
+                await _auctionAuction.Clients.All.SendAsync("AuctionEnded");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "An error occurred while ending the auction");
+            }
         }
 
         public void InsertAndCompareBid(Bid bid)
