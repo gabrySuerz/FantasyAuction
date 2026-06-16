@@ -1,4 +1,5 @@
-﻿using FantasyAuction.Server.Services.Interfaces;
+﻿using System.Threading.Tasks;
+using FantasyAuction.Server.Services.Interfaces;
 using FantasyAuction.Shared;
 using Microsoft.AspNetCore.SignalR;
 
@@ -13,7 +14,7 @@ namespace FantasyAuction.Server.Hubs
             _auctionHandlerService = auctionHandlerService;
         }
 
-        public async void SendBid(Bid bid)
+        public async Task SendBid(Bid bid)
         {
             if (_auctionHandlerService.GetAuctionState())
             {

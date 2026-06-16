@@ -11,7 +11,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
-using System.Threading;
 using System.Threading.Tasks;
 
 namespace FantasyAuction.Server.Services
@@ -47,7 +46,12 @@ namespace FantasyAuction.Server.Services
             _biddingTime = 20;
         }
 
-        public async void RefreshPlayersData()
+        public void RefreshPlayersData()
+        {
+            _ = RefreshPlayersDataAsync();
+        }
+
+        private async Task RefreshPlayersDataAsync()
         {
             var client = new HttpClient()
             {
@@ -57,7 +61,7 @@ namespace FantasyAuction.Server.Services
             using var response = await client.GetAsync("");
             if (response.IsSuccessStatusCode)
             {
-                var endpointResponse = JsonConvert.DeserializeObject<EndpointResponse>(response.Content.ReadAsStringAsync().Result);
+                var endpointResponse = JsonConvert.DeserializeObject<EndpointResponse>(await response.Content.ReadAsStringAsync());
                 _players = _mapper.Map<IEnumerable<Player>>(endpointResponse.Data);
                 _players.ToList().ForEach(p =>
                 {
@@ -81,11 +85,11 @@ namespace FantasyAuction.Server.Services
         {
             if (!_isAuctionInProgress)
             {
-                _ = new Task(() =>
+                _ = Task.Run(async () =>
                 {
-                    ClearAndStart();
-                    ExecuteAuction();
-                    EndAuction();
+                    await ClearAndStart();
+                    await ExecuteAuction();
+                    await EndAuctionAsync();
                 });
             }
             else
@@ -95,29 +99,35 @@ namespace FantasyAuction.Server.Services
             }
         }
 
-        private async void ClearAndStart()
+        private async Task ClearAndStart()
         {
             _isAuctionInProgress = true;
             _soldPlayers = new List<SoldPlayer>();
             await _auctionAuction.Clients.All.SendAsync("AuctionStarted", _waitingTime);
-            Thread.Sleep(_waitingTime * 1000);
+            await Task.Delay(_waitingTime * 1000);
         }
 
-        private async void ExecuteAuction()
+        private async Task ExecuteAuction()
         {
             var playersToPick = _players.ToList();
             while (playersToPick.Any())
             {
                 var player = playersToPick.First();
                 await _auctionAuction.Clients.All.SendAsync("ReceivePlayer", player, _biddingTime);
-                Thread.Sleep(_biddingTime * 1000);
+                await Task.Delay(_biddingTime * 1000);
                 playersToPick = playersToPick.Where(g => g.Id != player.Id).ToList();
                 await _auctionAuction.Clients.All.SendAsync("WaitNextPlayer", _waitingTime);
-                Thread.Sleep(_waitingTime * 1000);
+                await Task.Delay(_waitingTime * 1000);
             }
         }
 
         public async void EndAuction()
+        {
+            _isAuctionInProgress = false;
+            await _auctionAuction.Clients.All.SendAsync("AuctionEnded");
+        }
+
+        private async Task EndAuctionAsync()
         {
             _isAuctionInProgress = false;
             await _auctionAuction.Clients.All.SendAsync("AuctionEnded");
